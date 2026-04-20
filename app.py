@@ -5,53 +5,96 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
+import time
 
-# 🔍 PRÄZISE SUCHMUSTER
+# 🎯 NUR ECHTE BESCHRÄNKUNGEN
 PATTERNS = [
     r"pro Hochschule.*?nur ein Antrag",
+    r"je Hochschule.*?nur ein Antrag",
     r"nur ein Antrag",
-    r"maximal ein",
-    r"nicht mehr als.*?ein"
+    r"maximal ein Antrag",
+    r"höchstens ein Antrag",
+    r"eine Projektskizze je",
+    r"nur eine Skizze",
 ]
 
-# 🔧 BMFTR FIX
+# ❌ IRRELEVANTE TREFFER (rausfiltern!)
+EXCLUDE = [
+    "Reise",
+    "Euro",
+    "Fördersumme",
+    "Projektkosten",
+    "Budget",
+    "Mittel",
+    "Zuwendung",
+    "Laufzeit",
+]
+
+# 🔧 URL FIX
 def transform_url(url):
     if "bmftr.bund.de/SharedDocs/Bekanntmachungen" in url:
         return url.split("?")[0] + "?view=renderNewsletterHtml"
     return url
 
-# 🌐 TEXT AUSLESEN
+# 🌐 ROBUSTES LADEN (inkl. Retry)
+def fetch(url):
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    for attempt in range(2):
+        try:
+            r = requests.get(url, timeout=25, headers=headers)
+            r.raise_for_status()
+            return r
+        except:
+            time.sleep(2)
+
+    raise Exception("Request failed")
+
+# 📄 CONTENT
 def get_content(url):
     try:
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
+        url = transform_url(url)
+        r = fetch(url)
 
+        # PDF
         if url.endswith(".pdf"):
             with pdfplumber.open(BytesIO(r.content)) as pdf:
                 text = "\n".join(p.extract_text() or "" for p in pdf.pages)
-                title = text.split("\n")[0] if text else "PDF ohne Titel"
-        else:
-            soup = BeautifulSoup(r.text, "html.parser")
-            text = soup.get_text(" ")
-            title = soup.title.string.strip() if soup.title else url
 
+                if not text.strip():
+                    return "ERROR: PDF leer", "Fehler"
+
+                title = text.split("\n")[0]
+                return text, title
+
+        # HTML
+        soup = BeautifulSoup(r.text, "html.parser")
+        text = soup.get_text(" ")
+
+        if len(text) < 500:
+            return "ERROR: Seite leer", "Fehler"
+
+        title = soup.title.string.strip() if soup.title else url
         return text, title
 
-    except Exception:
-        return "ERROR", "Fehler beim Laden"
+    except Exception as e:
+        return f"ERROR: {str(e)}", "Fehler beim Laden"
 
-# 🧠 NUR RELEVANTE SÄTZE
+# 🧠 RELEVANTE SÄTZE
 def extract_sentence(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
 
     for sentence in sentences:
+        # ❌ irrelevante Sätze überspringen
+        if any(word.lower() in sentence.lower() for word in EXCLUDE):
+            continue
+
         for pattern in PATTERNS:
             if re.search(pattern, sentence, re.IGNORECASE):
 
-                # 🔴 Highlight des Treffers
                 highlighted = re.sub(
                     pattern,
-                    lambda m: f"🔴 **{m.group(0)}**",
+                    lambda m: f"🔴 {m.group(0)}",
                     sentence,
                     flags=re.IGNORECASE
                 )
@@ -60,7 +103,7 @@ def extract_sentence(text):
 
     return ""
 
-# 🎯 STREAMLIT APP
+# 🎯 UI
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
@@ -73,17 +116,16 @@ if st.button("Start"):
         if not url.strip():
             continue
 
-        fixed_url = transform_url(url)
-        text, title = get_content(fixed_url)
+        text, title = get_content(url)
 
-        if text == "ERROR":
+        if text.startswith("ERROR"):
             status = "⚠️ Nicht prüfbar"
-            quote = ""
+            quote = text
         else:
             quote = extract_sentence(text)
 
             if quote:
-                status = "⚠️ JA – Beschränkung möglich"
+                status = "⚠️ JA – Beschränkung"
             else:
                 status = "✅ Keine Beschränkung"
 
@@ -100,7 +142,7 @@ if st.button("Start"):
     # 📊 Anzeige
     st.dataframe(df, use_container_width=True)
 
-    # 📥 Excel Download (korrekt!)
+    # 📥 Excel Export
     buffer = BytesIO()
     df.to_excel(buffer, index=False, engine='openpyxl')
 
