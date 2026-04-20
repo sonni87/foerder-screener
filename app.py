@@ -6,11 +6,18 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
-# 🔍 ERWEITERTE PATTERNS + SYNONYME
+# 🔍 ERWEITERTE PATTERNS (mit Wortgrenzen!)
 PATTERNS = [
-    r"(nur|maximal|höchstens)?\s*(ein|eine|einen|1)\s+(Antrag|Projektantrag|Förderantrag|Skizze|Projektskizze|Vorhaben)",
-    r"(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben).*?(pro|je)\s+(Hochschule|Einrichtung|Institution)",
-    r"(pro|je)\s+(Hochschule|Einrichtung|Institution).*?(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)"
+    r"\b(nur|maximal|höchstens)?\s*\b(ein|eine|einen|1)\b\s+\b(Antrag|Projektantrag|Förderantrag|Skizze|Projektskizze|Vorhaben)\b",
+    r"\b(ein|eine|1)\b\s+\b(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)\b.*?\b(pro|je)\b\s+\b(Hochschule|Einrichtung|Institution)\b",
+    r"\b(pro|je)\b\s+\b(Hochschule|Einrichtung|Institution)\b.*?\b(ein|eine|1)\b\s+\b(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)\b"
+]
+
+# ❌ Ausschluss von falschen Treffern
+EXCLUDE = [
+    "Antragstellung",
+    "Antragsteller",
+    "Antragsverfahren"
 ]
 
 # 🔧 BMFTR FIX
@@ -40,7 +47,7 @@ def get_content(url):
             text = soup.get_text(" ")
             title = soup.title.string if soup.title else url
 
-        # 🔥 WICHTIG: Zeilenumbrüche entfernen
+        # 🔥 Zeilenumbrüche entfernen (wichtig für PDFs!)
         text = text.replace("\n", " ")
 
         return text, title
@@ -48,16 +55,18 @@ def get_content(url):
     except Exception:
         return "ERROR", "Fehler beim Laden"
 
-# 🧠 ZITATE FINDEN (verbessert)
+# 🧠 ZITATE FINDEN
 def extract_quotes(text):
     results = []
 
     for pattern in PATTERNS:
         for m in re.finditer(pattern, text, re.IGNORECASE):
 
-            start = max(0, m.start() - 120)
-            end = min(len(text), m.end() + 120)
-            snippet = text[start:end]
+            snippet = text[max(0, m.start()-120):m.end()+120]
+
+            # ❌ irrelevante Treffer rausfiltern
+            if any(word.lower() in snippet.lower() for word in EXCLUDE):
+                continue
 
             # 🔴 Highlight
             snippet = re.sub(
@@ -71,7 +80,7 @@ def extract_quotes(text):
 
     return "\n\n".join(results)
 
-# 🎯 APP
+# 🎯 STREAMLIT APP
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
@@ -107,9 +116,10 @@ if st.button("Start"):
 
     df = pd.DataFrame(results)
 
+    # 📊 Anzeige
     st.dataframe(df, use_container_width=True)
 
-    # 📥 CSV Export (wie bisher stabil)
+    # 📥 CSV Export (stabil)
     csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
