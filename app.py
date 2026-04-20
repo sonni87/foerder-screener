@@ -6,12 +6,11 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
-# 🔍 SUCHMUSTER (deine Version)
+# 🔍 ERWEITERTE PATTERNS + SYNONYME
 PATTERNS = [
-    r"pro Hochschule.*?nur ein Antrag",
-    r"nur ein Antrag",
-    r"maximal ein",
-    r"nicht mehr als"
+    r"(nur|maximal|höchstens)?\s*(ein|eine|einen|1)\s+(Antrag|Projektantrag|Förderantrag|Skizze|Projektskizze|Vorhaben)",
+    r"(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben).*?(pro|je)\s+(Hochschule|Einrichtung|Institution)",
+    r"(pro|je)\s+(Hochschule|Einrichtung|Institution).*?(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)"
 ]
 
 # 🔧 BMFTR FIX
@@ -20,43 +19,53 @@ def transform_url(url):
         return url.split("?")[0] + "?view=renderNewsletterHtml"
     return url
 
-# 🌐 CONTENT LADEN (stabile Version)
+# 🌐 CONTENT LADEN
 def get_content(url):
     try:
-        r = requests.get(url, timeout=20)
+        url = transform_url(url)
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, timeout=20, headers=headers)
         r.raise_for_status()
 
-        # PDF
+        # 📄 PDF
         if url.endswith(".pdf"):
             with pdfplumber.open(BytesIO(r.content)) as pdf:
                 text = "\n".join(p.extract_text() or "" for p in pdf.pages)
                 title = text.split("\n")[0] if text else "PDF ohne Titel"
 
-        # HTML
+        # 🌐 HTML
         else:
             soup = BeautifulSoup(r.text, "html.parser")
             text = soup.get_text(" ")
             title = soup.title.string if soup.title else url
+
+        # 🔥 WICHTIG: Zeilenumbrüche entfernen
+        text = text.replace("\n", " ")
 
         return text, title
 
     except Exception:
         return "ERROR", "Fehler beim Laden"
 
-# 🧠 ZITATE FINDEN
+# 🧠 ZITATE FINDEN (verbessert)
 def extract_quotes(text):
     results = []
 
     for pattern in PATTERNS:
-        matches = re.finditer(pattern, text, re.IGNORECASE)
+        for m in re.finditer(pattern, text, re.IGNORECASE):
 
-        for m in matches:
             start = max(0, m.start() - 120)
             end = min(len(text), m.end() + 120)
             snippet = text[start:end]
 
-            # 👉 Markierung wie früher (>>> <<<)
-            snippet = snippet.replace(m.group(0), f">>>{m.group(0)}<<<")
+            # 🔴 Highlight
+            snippet = re.sub(
+                re.escape(m.group(0)),
+                f">>>{m.group(0)}<<<",
+                snippet,
+                flags=re.IGNORECASE
+            )
 
             results.append(snippet.strip())
 
@@ -75,8 +84,7 @@ if st.button("Start"):
         if not url.strip():
             continue
 
-        fixed_url = transform_url(url)
-        text, title = get_content(fixed_url)
+        text, title = get_content(url)
 
         if text == "ERROR":
             status = "Nicht prüfbar"
@@ -99,10 +107,9 @@ if st.button("Start"):
 
     df = pd.DataFrame(results)
 
-    # Anzeige
     st.dataframe(df, use_container_width=True)
 
-    # 📥 CSV Export (stabil!)
+    # 📥 CSV Export (wie bisher stabil)
     csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
