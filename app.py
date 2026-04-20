@@ -5,105 +5,64 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
-import time
 
-# 🎯 NUR ECHTE BESCHRÄNKUNGEN
+# 🔍 SUCHMUSTER (deine Version)
 PATTERNS = [
     r"pro Hochschule.*?nur ein Antrag",
-    r"je Hochschule.*?nur ein Antrag",
     r"nur ein Antrag",
-    r"maximal ein Antrag",
-    r"höchstens ein Antrag",
-    r"eine Projektskizze je",
-    r"nur eine Skizze",
+    r"maximal ein",
+    r"nicht mehr als"
 ]
 
-# ❌ IRRELEVANTE TREFFER (rausfiltern!)
-EXCLUDE = [
-    "Reise",
-    "Euro",
-    "Fördersumme",
-    "Projektkosten",
-    "Budget",
-    "Mittel",
-    "Zuwendung",
-    "Laufzeit",
-]
-
-# 🔧 URL FIX
+# 🔧 BMFTR FIX
 def transform_url(url):
     if "bmftr.bund.de/SharedDocs/Bekanntmachungen" in url:
         return url.split("?")[0] + "?view=renderNewsletterHtml"
     return url
 
-# 🌐 ROBUSTES LADEN (inkl. Retry)
-def fetch(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    for attempt in range(2):
-        try:
-            r = requests.get(url, timeout=25, headers=headers)
-            r.raise_for_status()
-            return r
-        except:
-            time.sleep(2)
-
-    raise Exception("Request failed")
-
-# 📄 CONTENT
+# 🌐 CONTENT LADEN (stabile Version)
 def get_content(url):
     try:
-        url = transform_url(url)
-        r = fetch(url)
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
 
         # PDF
         if url.endswith(".pdf"):
             with pdfplumber.open(BytesIO(r.content)) as pdf:
                 text = "\n".join(p.extract_text() or "" for p in pdf.pages)
-
-                if not text.strip():
-                    return "ERROR: PDF leer", "Fehler"
-
-                title = text.split("\n")[0]
-                return text, title
+                title = text.split("\n")[0] if text else "PDF ohne Titel"
 
         # HTML
-        soup = BeautifulSoup(r.text, "html.parser")
-        text = soup.get_text(" ")
+        else:
+            soup = BeautifulSoup(r.text, "html.parser")
+            text = soup.get_text(" ")
+            title = soup.title.string if soup.title else url
 
-        if len(text) < 500:
-            return "ERROR: Seite leer", "Fehler"
-
-        title = soup.title.string.strip() if soup.title else url
         return text, title
 
-    except Exception as e:
-        return f"ERROR: {str(e)}", "Fehler beim Laden"
+    except Exception:
+        return "ERROR", "Fehler beim Laden"
 
-# 🧠 RELEVANTE SÄTZE
-def extract_sentence(text):
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+# 🧠 ZITATE FINDEN
+def extract_quotes(text):
+    results = []
 
-    for sentence in sentences:
-        # ❌ irrelevante Sätze überspringen
-        if any(word.lower() in sentence.lower() for word in EXCLUDE):
-            continue
+    for pattern in PATTERNS:
+        matches = re.finditer(pattern, text, re.IGNORECASE)
 
-        for pattern in PATTERNS:
-            if re.search(pattern, sentence, re.IGNORECASE):
+        for m in matches:
+            start = max(0, m.start() - 120)
+            end = min(len(text), m.end() + 120)
+            snippet = text[start:end]
 
-                highlighted = re.sub(
-                    pattern,
-                    lambda m: f"🔴 {m.group(0)}",
-                    sentence,
-                    flags=re.IGNORECASE
-                )
+            # 👉 Markierung wie früher (>>> <<<)
+            snippet = snippet.replace(m.group(0), f">>>{m.group(0)}<<<")
 
-                return highlighted.strip()
+            results.append(snippet.strip())
 
-    return ""
+    return "\n\n".join(results)
 
-# 🎯 UI
+# 🎯 APP
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
@@ -116,39 +75,39 @@ if st.button("Start"):
         if not url.strip():
             continue
 
-        text, title = get_content(url)
+        fixed_url = transform_url(url)
+        text, title = get_content(fixed_url)
 
-        if text.startswith("ERROR"):
-            status = "⚠️ Nicht prüfbar"
-            quote = text
+        if text == "ERROR":
+            status = "Nicht prüfbar"
+            quote = ""
         else:
-            quote = extract_sentence(text)
+            quote = extract_quotes(text)
 
             if quote:
-                status = "⚠️ JA – Beschränkung"
+                status = "JA – TREFFER"
             else:
-                status = "✅ Keine Beschränkung"
+                status = "Keine Beschränkung"
 
         results.append({
             "Nr": i,
             "Titel": title,
             "URL": url,
             "Status": status,
-            "Relevanter Satz": quote
+            "Zitat": quote
         })
 
     df = pd.DataFrame(results)
 
-    # 📊 Anzeige
+    # Anzeige
     st.dataframe(df, use_container_width=True)
 
-    # 📥 Excel Export
-    buffer = BytesIO()
-    df.to_excel(buffer, index=False, engine='openpyxl')
+    # 📥 CSV Export (stabil!)
+    csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
-        "📥 Excel herunterladen",
-        buffer.getvalue(),
-        "foerder_screening.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "📥 CSV herunterladen",
+        csv,
+        "foerder_screening.csv",
+        "text/csv"
     )
