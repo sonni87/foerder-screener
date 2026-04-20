@@ -6,19 +6,21 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
-# 🎯 PRÄZISE MUSTER
+# 🔍 PRÄZISE SUCHMUSTER
 PATTERNS = [
     r"pro Hochschule.*?nur ein Antrag",
     r"nur ein Antrag",
     r"maximal ein",
-    r"nicht mehr als.*?ein",
+    r"nicht mehr als.*?ein"
 ]
 
+# 🔧 BMFTR FIX
 def transform_url(url):
     if "bmftr.bund.de/SharedDocs/Bekanntmachungen" in url:
         return url.split("?")[0] + "?view=renderNewsletterHtml"
     return url
 
+# 🌐 TEXT AUSLESEN
 def get_content(url):
     try:
         r = requests.get(url, timeout=20)
@@ -27,28 +29,38 @@ def get_content(url):
         if url.endswith(".pdf"):
             with pdfplumber.open(BytesIO(r.content)) as pdf:
                 text = "\n".join(p.extract_text() or "" for p in pdf.pages)
-                title = text.split("\n")[0]
+                title = text.split("\n")[0] if text else "PDF ohne Titel"
         else:
             soup = BeautifulSoup(r.text, "html.parser")
             text = soup.get_text(" ")
-            title = soup.title.string if soup.title else url
+            title = soup.title.string.strip() if soup.title else url
 
         return text, title
-    except:
-        return "ERROR", "Fehler"
 
-# 🎯 NUR GANZE SÄTZE EXTRAHIEREN
+    except Exception:
+        return "ERROR", "Fehler beim Laden"
+
+# 🧠 NUR RELEVANTE SÄTZE
 def extract_sentence(text):
     sentences = re.split(r'(?<=[.!?])\s+', text)
 
     for sentence in sentences:
         for pattern in PATTERNS:
             if re.search(pattern, sentence, re.IGNORECASE):
-                return sentence.strip()
+
+                # 🔴 Highlight des Treffers
+                highlighted = re.sub(
+                    pattern,
+                    lambda m: f"🔴 **{m.group(0)}**",
+                    sentence,
+                    flags=re.IGNORECASE
+                )
+
+                return highlighted.strip()
 
     return ""
 
-# 🎯 APP
+# 🎯 STREAMLIT APP
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
@@ -61,8 +73,8 @@ if st.button("Start"):
         if not url.strip():
             continue
 
-        fixed = transform_url(url)
-        text, title = get_content(fixed)
+        fixed_url = transform_url(url)
+        text, title = get_content(fixed_url)
 
         if text == "ERROR":
             status = "⚠️ Nicht prüfbar"
@@ -71,9 +83,9 @@ if st.button("Start"):
             quote = extract_sentence(text)
 
             if quote:
-                status = "⚠️ JA"
+                status = "⚠️ JA – Beschränkung möglich"
             else:
-                status = "✅ Nein"
+                status = "✅ Keine Beschränkung"
 
         results.append({
             "Nr": i,
@@ -85,14 +97,16 @@ if st.button("Start"):
 
     df = pd.DataFrame(results)
 
-    # 🔥 SAUBERE TABELLE
+    # 📊 Anzeige
     st.dataframe(df, use_container_width=True)
 
-    # 🔥 RICHTIGER EXCEL EXPORT
-    excel = df.to_excel(index=False, engine='openpyxl')
+    # 📥 Excel Download (korrekt!)
+    buffer = BytesIO()
+    df.to_excel(buffer, index=False, engine='openpyxl')
 
     st.download_button(
         "📥 Excel herunterladen",
-        excel,
-        "foerder_screening.xlsx"
+        buffer.getvalue(),
+        "foerder_screening.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
