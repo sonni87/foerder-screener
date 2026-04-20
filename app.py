@@ -6,14 +6,14 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
-# 🔍 ERWEITERTE PATTERNS (mit Wortgrenzen!)
+# 🔍 PATTERNS (bewusst etwas toleranter für PDFs)
 PATTERNS = [
-    r"\b(nur|maximal|höchstens)?\s*\b(ein|eine|einen|1)\b\s+\b(Antrag|Projektantrag|Förderantrag|Skizze|Projektskizze|Vorhaben)\b",
-    r"\b(ein|eine|1)\b\s+\b(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)\b.*?\b(pro|je)\b\s+\b(Hochschule|Einrichtung|Institution)\b",
-    r"\b(pro|je)\b\s+\b(Hochschule|Einrichtung|Institution)\b.*?\b(ein|eine|1)\b\s+\b(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)\b"
+    r"(nur|maximal|höchstens)?\s*(ein|eine|einen|1)\s+(Antrag|Projektantrag|Förderantrag|Skizze|Projektskizze|Vorhaben)",
+    r"(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben).*?(pro|je)\s+(Hochschule|Einrichtung|Institution)",
+    r"(pro|je)\s+(Hochschule|Einrichtung|Institution).*?(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)"
 ]
 
-# ❌ Ausschluss von falschen Treffern
+# ❌ Wörter, die wir vermeiden wollen
 EXCLUDE = [
     "Antragstellung",
     "Antragsteller",
@@ -32,7 +32,7 @@ def get_content(url):
         url = transform_url(url)
 
         headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(url, timeout=20, headers=headers)
+        r = requests.get(url, timeout=25, headers=headers)
         r.raise_for_status()
 
         # 📄 PDF
@@ -47,13 +47,14 @@ def get_content(url):
             text = soup.get_text(" ")
             title = soup.title.string if soup.title else url
 
-        # 🔥 Zeilenumbrüche entfernen (wichtig für PDFs!)
-        text = text.replace("\n", " ")
+        # 🔥 WICHTIG: PDF-Reparatur
+        text = text.replace("-\n", "")   # entfernt Worttrennung
+        text = text.replace("\n", " ")   # entfernt Zeilenumbrüche
 
         return text, title
 
-    except Exception:
-        return "ERROR", "Fehler beim Laden"
+    except Exception as e:
+        return f"ERROR: {str(e)}", "Fehler beim Laden"
 
 # 🧠 ZITATE FINDEN
 def extract_quotes(text):
@@ -64,8 +65,8 @@ def extract_quotes(text):
 
             snippet = text[max(0, m.start()-120):m.end()+120]
 
-            # ❌ irrelevante Treffer rausfiltern
-            if any(word.lower() in snippet.lower() for word in EXCLUDE):
+            # ❌ nur ignorieren, wenn der Treffer selbst betroffen ist
+            if any(word.lower() in m.group(0).lower() for word in EXCLUDE):
                 continue
 
             # 🔴 Highlight
@@ -95,9 +96,9 @@ if st.button("Start"):
 
         text, title = get_content(url)
 
-        if text == "ERROR":
+        if text.startswith("ERROR"):
             status = "Nicht prüfbar"
-            quote = ""
+            quote = text
         else:
             quote = extract_quotes(text)
 
