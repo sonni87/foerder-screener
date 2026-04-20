@@ -6,11 +6,12 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
+# 🎯 PRÄZISE MUSTER
 PATTERNS = [
-    r"\bpro\s+(Hochschule|Einrichtung|Institution)\b",
-    r"\bnur\s+ein(en|e)?\s+(Antrag|Einzelantrag)\b",
-    r"\bmaximal\s+ein(en|e)?\b",
-    r"\bnicht\s+mehr\s+als\b"
+    r"pro Hochschule.*?nur ein Antrag",
+    r"nur ein Antrag",
+    r"maximal ein",
+    r"nicht mehr als.*?ein",
 ]
 
 def transform_url(url):
@@ -36,42 +37,62 @@ def get_content(url):
     except:
         return "ERROR", "Fehler"
 
-def extract(text):
-    for pattern in PATTERNS:
-        m = re.search(pattern, text, re.IGNORECASE)
-        if m:
-            start = max(m.start()-100,0)
-            end = min(m.end()+100,len(text))
-            snippet = text[start:end]
-            return re.sub(m.group(0), f"🔴 {m.group(0)}", snippet, flags=re.IGNORECASE)
+# 🎯 NUR GANZE SÄTZE EXTRAHIEREN
+def extract_sentence(text):
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    for sentence in sentences:
+        for pattern in PATTERNS:
+            if re.search(pattern, sentence, re.IGNORECASE):
+                return sentence.strip()
+
     return ""
 
+# 🎯 APP
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
 
 if st.button("Start"):
+
     results = []
 
-    for url in urls.split("\n"):
+    for i, url in enumerate(urls.split("\n"), 1):
         if not url.strip():
             continue
 
-        text, title = get_content(transform_url(url))
+        fixed = transform_url(url)
+        text, title = get_content(fixed)
 
         if text == "ERROR":
-            status = "Nicht prüfbar"
+            status = "⚠️ Nicht prüfbar"
             quote = ""
         else:
-            quote = extract(text)
-            status = "Treffer" if quote else "Keine Beschränkung"
+            quote = extract_sentence(text)
+
+            if quote:
+                status = "⚠️ JA"
+            else:
+                status = "✅ Nein"
 
         results.append({
+            "Nr": i,
             "Titel": title,
             "URL": url,
             "Status": status,
-            "Zitat": quote
+            "Relevanter Satz": quote
         })
 
     df = pd.DataFrame(results)
-    st.dataframe(df)
+
+    # 🔥 SAUBERE TABELLE
+    st.dataframe(df, use_container_width=True)
+
+    # 🔥 RICHTIGER EXCEL EXPORT
+    excel = df.to_excel(index=False, engine='openpyxl')
+
+    st.download_button(
+        "📥 Excel herunterladen",
+        excel,
+        "foerder_screening.xlsx"
+    )
