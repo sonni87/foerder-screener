@@ -6,18 +6,72 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
-# 🔍 PATTERNS (bewusst etwas toleranter für PDFs)
+# 🔍 ALLE FORMULIERUNGEN EXPLIZIT
+
 PATTERNS = [
-    r"(nur|maximal|höchstens)?\s*(ein|eine|einen|1)\s+(Antrag|Projektantrag|Förderantrag|Skizze|Projektskizze|Vorhaben)",
-    r"(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben).*?(pro|je)\s+(Hochschule|Einrichtung|Institution)",
-    r"(pro|je)\s+(Hochschule|Einrichtung|Institution).*?(ein|eine|1)\s+(Antrag|Projektantrag|Skizze|Projektskizze|Vorhaben)"
+
+    # --- PRO / JE ---
+    r"pro Hochschule.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"je Hochschule.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"pro Einrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"je Einrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"pro Institution.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"je Institution.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"pro Forschungseinrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"je Forschungseinrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"pro Universität.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"je Universität.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+
+    # --- MENGE ---
+    r"nur\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"maximal\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"max\.\s*(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"höchstens\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    r"nicht mehr als\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+
+    # --- UMGEKEHRT ---
+    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?je Hochschule",
+    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?pro Hochschule",
+    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?je Einrichtung",
+    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?pro Einrichtung",
+    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?je Institution",
+
+    # --- EINREICHUNG ---
+    r"kann nur\s+(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben)\s+eingereicht werden",
+    r"darf nur\s+(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben)\s+eingereicht werden",
+    r"kann\s+(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben)\s+gestellt werden.*?(pro|je)",
+
+    # --- BESCHRÄNKUNG ---
+    r"Einreichung.*?beschränkt.*?(ein|eine)\s+(Antrag|Skizze)",
+    r"Beteiligung.*?beschränkt.*?(ein|eine)\s+(Antrag|Skizze)",
+    r"nur\s+(ein|eine)\s+(Antrag|Skizze)\s+pro Hochschule zulässig",
+    r"nur\s+(ein|eine)\s+(Antrag|Skizze)\s+pro Einrichtung zulässig",
+
+    # --- VORAUSWAHL ---
+    r"hochschulinterne Vorauswahl",
+    r"internes Auswahlverfahren",
+    r"institutionelle Vorauswahl",
+    r"Pre-selection",
+    r"internal selection",
+
+    # --- ENGLISCH ---
+    r"one proposal per institution",
+    r"only one application",
+    r"maximum one proposal",
+    r"per university only one application",
+    r"not more than one proposal"
 ]
 
-# ❌ Wörter, die wir vermeiden wollen
+# ❌ Ausschlüsse
 EXCLUDE = [
     "Antragstellung",
     "Antragsteller",
-    "Antragsverfahren"
+    "Antragsverfahren",
+    "Euro",
+    "€",
+    "Reise",
+    "Budget",
+    "Laufzeit"
 ]
 
 # 🔧 BMFTR FIX
@@ -26,37 +80,33 @@ def transform_url(url):
         return url.split("?")[0] + "?view=renderNewsletterHtml"
     return url
 
-# 🌐 CONTENT LADEN
+# 🌐 CONTENT
 def get_content(url):
     try:
         url = transform_url(url)
-
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, timeout=25, headers=headers)
         r.raise_for_status()
 
-        # 📄 PDF
         if url.endswith(".pdf"):
             with pdfplumber.open(BytesIO(r.content)) as pdf:
                 text = "\n".join(p.extract_text() or "" for p in pdf.pages)
                 title = text.split("\n")[0] if text else "PDF ohne Titel"
-
-        # 🌐 HTML
         else:
             soup = BeautifulSoup(r.text, "html.parser")
             text = soup.get_text(" ")
             title = soup.title.string if soup.title else url
 
-        # 🔥 WICHTIG: PDF-Reparatur
-        text = text.replace("-\n", "")   # entfernt Worttrennung
-        text = text.replace("\n", " ")   # entfernt Zeilenumbrüche
+        # PDF Fix
+        text = text.replace("-\n", "")
+        text = text.replace("\n", " ")
 
         return text, title
 
     except Exception as e:
         return f"ERROR: {str(e)}", "Fehler beim Laden"
 
-# 🧠 ZITATE FINDEN
+# 🧠 MATCHING
 def extract_quotes(text):
     results = []
 
@@ -65,11 +115,9 @@ def extract_quotes(text):
 
             snippet = text[max(0, m.start()-120):m.end()+120]
 
-            # ❌ nur ignorieren, wenn der Treffer selbst betroffen ist
-            if any(word.lower() in m.group(0).lower() for word in EXCLUDE):
+            if any(word.lower() in snippet.lower() for word in EXCLUDE):
                 continue
 
-            # 🔴 Highlight
             snippet = re.sub(
                 re.escape(m.group(0)),
                 f">>>{m.group(0)}<<<",
@@ -81,7 +129,7 @@ def extract_quotes(text):
 
     return "\n\n".join(results)
 
-# 🎯 STREAMLIT APP
+# 🎯 APP
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
@@ -101,11 +149,7 @@ if st.button("Start"):
             quote = text
         else:
             quote = extract_quotes(text)
-
-            if quote:
-                status = "JA – TREFFER"
-            else:
-                status = "Keine Beschränkung"
+            status = "JA – TREFFER" if quote else "Keine Beschränkung"
 
         results.append({
             "Nr": i,
@@ -117,10 +161,8 @@ if st.button("Start"):
 
     df = pd.DataFrame(results)
 
-    # 📊 Anzeige
     st.dataframe(df, use_container_width=True)
 
-    # 📥 CSV Export (stabil)
     csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
