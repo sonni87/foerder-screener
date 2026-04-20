@@ -6,63 +6,31 @@ from bs4 import BeautifulSoup
 from io import BytesIO
 import pdfplumber
 
-# 🔍 ALLE FORMULIERUNGEN EXPLIZIT
-
+# 🔥 FLEXIBLE & PRAXISTAUGLICHE PATTERNS
 PATTERNS = [
 
-    # --- PRO / JE ---
-    r"pro Hochschule.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"je Hochschule.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"pro Einrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"je Einrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"pro Institution.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"je Institution.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"pro Forschungseinrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"je Forschungseinrichtung.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"pro Universität.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"je Universität.*?(ein|eine|einen|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    # 🔹 pro / je Kombination
+    r"(ein|eine|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt).*?(pro|je)\s+(Hochschule|Einrichtung|Institution|Universität)",
+    r"(pro|je)\s+(Hochschule|Einrichtung|Institution|Universität).*?(ein|eine|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
 
-    # --- MENGE ---
-    r"nur\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"maximal\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"max\.\s*(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"höchstens\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
-    r"nicht mehr als\s+(ein|eine|einen)\s+(Antrag|Skizze|Projektskizze|Vorhaben|Projekt)",
+    # 🔹 Mengenbegrenzung
+    r"(nur|maximal|max\.|höchstens|nicht mehr als).*?(ein|eine|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben)",
 
-    # --- UMGEKEHRT ---
-    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?je Hochschule",
-    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?pro Hochschule",
-    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?je Einrichtung",
-    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?pro Einrichtung",
-    r"(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?je Institution",
+    # 🔹 Einreichung
+    r"(kann|darf).*?(nur\s*)?(ein|eine|1)\s+(Antrag|Skizze|Projektskizze|Vorhaben).*?(eingereicht|gestellt)",
 
-    # --- EINREICHUNG ---
-    r"kann nur\s+(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben)\s+eingereicht werden",
-    r"darf nur\s+(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben)\s+eingereicht werden",
-    r"kann\s+(ein|eine)\s+(Antrag|Skizze|Projektskizze|Vorhaben)\s+gestellt werden.*?(pro|je)",
+    # 🔹 Beschränkung
+    r"(beschränkt|begrenzt).*?(ein|eine)\s+(Antrag|Skizze|Projektskizze)",
 
-    # --- BESCHRÄNKUNG ---
-    r"Einreichung.*?beschränkt.*?(ein|eine)\s+(Antrag|Skizze)",
-    r"Beteiligung.*?beschränkt.*?(ein|eine)\s+(Antrag|Skizze)",
-    r"nur\s+(ein|eine)\s+(Antrag|Skizze)\s+pro Hochschule zulässig",
-    r"nur\s+(ein|eine)\s+(Antrag|Skizze)\s+pro Einrichtung zulässig",
+    # 🔹 Vorauswahl (sehr wichtig!)
+    r"(hochschulinterne|interne|institutionelle).*?(Vorauswahl|Auswahlverfahren)",
 
-    # --- VORAUSWAHL ---
-    r"hochschulinterne Vorauswahl",
-    r"internes Auswahlverfahren",
-    r"institutionelle Vorauswahl",
-    r"Pre-selection",
-    r"internal selection",
-
-    # --- ENGLISCH ---
-    r"one proposal per institution",
-    r"only one application",
-    r"maximum one proposal",
-    r"per university only one application",
-    r"not more than one proposal"
+    # 🔹 Englisch
+    r"(one|1)\s+(proposal|application).*?(per)\s+(institution|university)",
+    r"(only|maximum).*?(one)\s+(proposal|application)"
 ]
 
-# ❌ Ausschlüsse
+# ❌ Ausschlüsse (gegen False Positives)
 EXCLUDE = [
     "Antragstellung",
     "Antragsteller",
@@ -80,24 +48,28 @@ def transform_url(url):
         return url.split("?")[0] + "?view=renderNewsletterHtml"
     return url
 
-# 🌐 CONTENT
+# 🌐 CONTENT LADEN
 def get_content(url):
     try:
         url = transform_url(url)
+
         headers = {"User-Agent": "Mozilla/5.0"}
         r = requests.get(url, timeout=25, headers=headers)
         r.raise_for_status()
 
+        # 📄 PDF
         if url.endswith(".pdf"):
             with pdfplumber.open(BytesIO(r.content)) as pdf:
                 text = "\n".join(p.extract_text() or "" for p in pdf.pages)
                 title = text.split("\n")[0] if text else "PDF ohne Titel"
+
+        # 🌐 HTML
         else:
             soup = BeautifulSoup(r.text, "html.parser")
             text = soup.get_text(" ")
             title = soup.title.string if soup.title else url
 
-        # PDF Fix
+        # 🔥 PDF-Fix (entscheidend!)
         text = text.replace("-\n", "")
         text = text.replace("\n", " ")
 
@@ -106,7 +78,7 @@ def get_content(url):
     except Exception as e:
         return f"ERROR: {str(e)}", "Fehler beim Laden"
 
-# 🧠 MATCHING
+# 🧠 ZITATE FINDEN
 def extract_quotes(text):
     results = []
 
@@ -115,9 +87,11 @@ def extract_quotes(text):
 
             snippet = text[max(0, m.start()-120):m.end()+120]
 
+            # ❌ irrelevante Treffer raus
             if any(word.lower() in snippet.lower() for word in EXCLUDE):
                 continue
 
+            # 🔴 Highlight
             snippet = re.sub(
                 re.escape(m.group(0)),
                 f">>>{m.group(0)}<<<",
@@ -129,7 +103,7 @@ def extract_quotes(text):
 
     return "\n\n".join(results)
 
-# 🎯 APP
+# 🎯 STREAMLIT APP
 st.title("🔍 Förder-Screener")
 
 urls = st.text_area("URLs (eine pro Zeile)")
@@ -149,7 +123,11 @@ if st.button("Start"):
             quote = text
         else:
             quote = extract_quotes(text)
-            status = "JA – TREFFER" if quote else "Keine Beschränkung"
+
+            if quote:
+                status = "JA – TREFFER"
+            else:
+                status = "Keine Beschränkung"
 
         results.append({
             "Nr": i,
@@ -161,8 +139,10 @@ if st.button("Start"):
 
     df = pd.DataFrame(results)
 
+    # 📊 Anzeige
     st.dataframe(df, use_container_width=True)
 
+    # 📥 CSV Export
     csv = df.to_csv(index=False).encode("utf-8")
 
     st.download_button(
